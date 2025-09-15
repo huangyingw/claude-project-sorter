@@ -69,23 +69,144 @@ class ProjectSorter:
             # 也处理实际目录（可能是sessions目录本身）
             elif os.path.isdir(item_path):
                 # 从目录名推断项目路径
-                # 例如: -home-huangyingw-myproject-git-tools-claude-project-sorter 
-                # 转换为: /home/huangyingw/myproject/git/tools/claude-project-sorter
+                # 例如: -home-huangyingw-loadrc-efficient_file_scanner-worktrees-release-v1-0-0
+                # 转换为: /home/huangyingw/loadrc/efficient_file_scanner/worktrees/release-v1.0.0
                 if item.startswith("-"):
                     # 特殊处理：移除开头的横杠
                     path_str = item[1:]
-                    # 分析路径结构：home-huangyingw-myproject-git-tools-claude-project-sorter
-                    # 应该转换为：/home/huangyingw/myproject/git/tools/claude-project-sorter
-                    
-                    # 尝试智能分割
-                    # 前5个部分肯定是目录：home/huangyingw/myproject/git/tools
-                    parts = path_str.split("-", 5)  # 最多分割5次
-                    if len(parts) > 5:
-                        # 前5个部分作为路径，剩余部分保持原样
-                        project_path = "/" + "/".join(parts[:5]) + "/" + parts[5]
-                    else:
-                        # 简单情况，全部转换
-                        project_path = "/" + path_str.replace("-", "/")
+
+                    # 智能转换路径：处理包含下划线的目录名
+                    # 策略：尝试多种可能的路径组合，选择存在的那个
+                    possible_paths = []
+
+                    # 方案1：简单替换所有横杠为斜杠（不包含下划线的情况）
+                    simple_path = "/" + path_str.replace("-", "/")
+                    possible_paths.append(simple_path)
+
+                    # 分割路径用于后续处理
+                    parts = path_str.split("-")
+
+                    # 方案2：智能处理包含下划线的目录名
+                    # 对于路径如：home-huangyingw-loadrc-efficient_file_scanner-worktrees-release-v1-0-0
+                    # 应该识别出 efficient_file_scanner 是一个完整的目录名
+
+                    # 先检查路径中是否包含下划线
+                    if "_" in path_str:
+                        # 找出所有包含下划线的部分
+                        segments = path_str.split("-")
+
+                        # 重建路径，保留包含下划线的段
+                        rebuilt_parts = []
+                        i = 0
+                        while i < len(segments):
+                            if "_" in segments[i]:
+                                # 这个段包含下划线，保持原样
+                                rebuilt_parts.append(segments[i])
+                            elif i > 0 and i < len(segments) - 1:
+                                # 检查是否应该与前后的段合并
+                                # 例如：efficient 和 file 和 scanner 应该合并为 efficient_file_scanner
+                                if (i > 0 and "_" in rebuilt_parts[-1] and
+                                    rebuilt_parts[-1].endswith(segments[i].split("_")[0] if "_" in segments[i] else "")):
+                                    # 可能是被错误分割的一部分
+                                    rebuilt_parts[-1] = rebuilt_parts[-1] + "-" + segments[i]
+                                elif i < len(segments) - 1 and "_" in segments[i + 1]:
+                                    # 下一个段包含下划线，可能这个段是前缀
+                                    # 检查是否应该合并
+                                    next_part = segments[i + 1]
+                                    if next_part.startswith(segments[i] + "_"):
+                                        # 应该合并
+                                        continue
+                                    else:
+                                        rebuilt_parts.append(segments[i])
+                                else:
+                                    rebuilt_parts.append(segments[i])
+                            else:
+                                rebuilt_parts.append(segments[i])
+                            i += 1
+
+                        test_path = "/" + "/".join(rebuilt_parts)
+                        possible_paths.append(test_path)
+
+                    # 方案3：通用处理包含下划线的目录名
+                    # 策略：如果路径字符串包含下划线，说明某些段是用下划线连接的完整目录名
+                    # 需要尝试识别这些段并保持它们的完整性
+                    if "_" in path_str:
+                        # 构建一个新的路径，尝试找到最可能的组合
+                        # 原则：包含下划线的段应该保持原样，其他段用斜杠分隔
+                        original_parts = path_str.split("-")
+
+                        # 尝试重建路径：检查哪些连续的部分可能组成一个包含下划线的目录名
+                        for window_size in range(2, min(5, len(original_parts))):  # 窗口大小从2到4
+                            for start_idx in range(len(original_parts) - window_size + 1):
+                                # 检查这个窗口内的部分是否可能是一个目录名
+                                window_parts = original_parts[start_idx:start_idx + window_size]
+
+                                # 尝试用下划线连接这些部分
+                                combined = "_".join(window_parts)
+
+                                # 构建新路径
+                                new_parts = (
+                                    original_parts[:start_idx] +
+                                    [combined] +
+                                    original_parts[start_idx + window_size:]
+                                )
+                                test_path = "/" + "/".join(new_parts)
+
+                                # 如果这个路径存在，优先使用
+                                if os.path.exists(test_path):
+                                    possible_paths.insert(0, test_path)
+                                else:
+                                    possible_paths.append(test_path)
+
+                    # 方案4：处理版本号模式 (release-v1-0-0 -> release-v1.0.0)
+                    # 通用版本号识别：查找 vX-Y-Z 模式并转换为 vX.Y.Z
+                    new_parts = []
+                    i = 0
+                    while i < len(parts):
+                        # 检查是否是版本号模式
+                        if i + 2 < len(parts) and parts[i].startswith("v") and parts[i][1:].isdigit():
+                            # 可能是版本号 vX-Y-Z
+                            if parts[i+1].isdigit() and parts[i+2].isdigit():
+                                # 确认是版本号，合并为 vX.Y.Z
+                                version_str = f"{parts[i]}.{parts[i+1]}.{parts[i+2]}"
+                                new_parts.append(version_str)
+                                i += 3
+                                continue
+
+                        # 检查是否是 release-vX-Y-Z 模式
+                        if parts[i] == "release" and i + 3 < len(parts):
+                            if parts[i+1].startswith("v") and parts[i+2].isdigit() and parts[i+3].isdigit():
+                                # release-vX-Y-Z -> release-vX.Y.Z
+                                version_str = f"release-{parts[i+1]}.{parts[i+2]}.{parts[i+3]}"
+                                new_parts.append(version_str)
+                                i += 4
+                                continue
+
+                        new_parts.append(parts[i])
+                        i += 1
+
+                    if new_parts != parts:  # 如果有改变
+                        test_path = "/" + "/".join(new_parts)
+                        possible_paths.insert(0, test_path)  # 优先尝试这个路径
+
+                    # 查找第一个存在的路径
+                    project_path = None
+                    for test_path in possible_paths:
+                        if os.path.exists(test_path):
+                            project_path = test_path
+                            break
+
+                    if project_path is None:
+                        # 如果没有找到存在的路径，使用最可能的路径
+                        if len(possible_paths) > 1:
+                            # 优先使用包含正确目录结构的路径
+                            project_path = possible_paths[0]  # 第一个是优先级最高的
+                        else:
+                            project_path = simple_path
+
+                        # 只在路径确实不像真实路径时给出警告
+                        if not os.path.dirname(project_path).startswith("/home") and not os.path.dirname(project_path).startswith("/media"):
+                            print(f"警告: 目录项 {item} 转换的路径可能不正确: {project_path}", file=sys.stderr)
                 else:
                     # 非标准目录名，使用原路径
                     project_path = item_path
