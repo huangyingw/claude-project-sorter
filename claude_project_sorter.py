@@ -58,12 +58,19 @@ class ProjectSorter:
                     if line.startswith('"') and line.endswith('"'):
                         line = line[1:-1]
 
-                    # 检查文件是否存在
-                    if os.path.exists(line):
-                        # 获取文件所在目录
+                    # 确定要检查的目录路径
+                    if os.path.isfile(line):
+                        # 如果是文件，使用文件所在目录
+                        dir_path = os.path.dirname(line)
+                    elif os.path.isdir(line):
+                        # 如果是目录，直接使用该目录
+                        dir_path = line
+                    else:
+                        # 如果路径不存在，尝试使用路径的父目录
                         dir_path = os.path.dirname(line)
 
-                        # 检查是否存在 .claude/sessions 子目录
+                    # 检查目录是否存在且包含 .claude/sessions 子目录
+                    if os.path.isdir(dir_path):
                         sessions_dir = os.path.join(dir_path, '.claude', 'sessions')
                         if os.path.exists(sessions_dir) and os.path.isdir(sessions_dir):
                             # 创建项目对象
